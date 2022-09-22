@@ -26,6 +26,8 @@ from riotwatcher import LolWatcher, ApiError
 
 import config
 
+SUMMONERS_COUNT = 0
+
 
 def main():
     """Entry point of the function"""
@@ -33,6 +35,9 @@ def main():
     API_TOKEN = config.API_TOKEN
     DATABASE_NAME = config.DATABASE_NAME
     DATABASE_PATH = config.DATABASE_PATH
+
+    TIER_LIST = ["IRON", "BRONZE", "SILVER", "GOLD", "PLATINUM", "DIAMOND"]
+    DIVISION_LIST = ["I", "II", "III", "IV"]
 
     if DATABASE_PATH == "/":
         current_directory = os.path.dirname(os.path.abspath(__file__))
@@ -50,53 +55,100 @@ def main():
 
     database_handle = sqlite3.connect(complete_path)
 
-    try:
-        # Get all entries for the tier BRONZE I
-        entries = lol_watcher_handle.league.entries(
-            region="EUW1", queue="RANKED_SOLO_5x5", tier="BRONZE", division="I", page=1
-        )
-
-        # For every summoner found
-
-        players_data = []
-
-        for (count, entry) in enumerate(entries):
-            if count > 30:
-                continue
-            print(f"summoner n°{count} is named {entry['summonerName']}")
-
-            summonerId = entry["summonerId"]
-            summoner_ranked_info = lol_watcher_handle.league.by_summoner(
-                region="EUW1", encrypted_summoner_id=summonerId
+    for rank in TIER_LIST:
+        for division in DIVISION_LIST:
+            get_all_players_from_league(
+                lol_watcher_handle, database_handle, rank, division
             )
 
-            for league_type in summoner_ranked_info:
-                # We only want ranked solo/duo data
-                if not league_type["queueType"] == "RANKED_SOLO_5x5":
-                    continue
 
-                rank = league_type["tier"]
-                rank = convert_rank_string_to_int(rank)
-                division = league_type["rank"]
-                division = convert_division_to_int(division)
+def get_all_players_from_league(
+    lol_watcher_handle: LolWatcher,
+    database_handle: sqlite3.Connection,
+    players_rank: str,
+    players_division: str,
+) -> None:
+    """A function that gathers all players from the rank and division specified,
+    and adds them to the database
 
-                wins = league_type["wins"]
-                losses = league_type["losses"]
-                winrate = round(100 * wins / (losses + wins), 1)
+    Args:
+        lol_watcher_handle (LolWatcher): The Lol Watcher handle
+        database_handle (sqlite3.Connection): The database handle
+        rank (str): The string that represents the rank
+        division (str): The string that represents the division
 
-                players_data.append(
-                    (
-                        summonerId,
-                        rank,
-                        division,
-                        winrate,
-                        rank,
-                        division,
-                        winrate,
-                    )
+    Pre-requisites:
+        rank is in ["IRON", "BRONZE", "SILVER", "GOLD", "PLATINUM", "DIAMOND"]
+        division is in ["I", "II", "III", "IV"]
+    """
+
+    # try/except to catch the API errors
+    try:
+
+        entries_left_flag = True
+        page = 1
+
+        # While the API returns entries
+        while entries_left_flag:
+
+            # Get all entries for the tier and division
+            entries = lol_watcher_handle.league.entries(
+                region="EUW1",
+                queue="RANKED_SOLO_5x5",
+                tier=players_rank,
+                division=players_division,
+                page=page,
+            )
+
+            # If entries is an empty list, which means there are no more entires
+            if not entries:
+                entries_left_flag = False
+                continue
+
+            players_data = []
+
+            # For every summoner found
+            for entry in entries:
+                global SUMMONERS_COUNT
+                SUMMONERS_COUNT += 1
+                print(f"summoner n°{SUMMONERS_COUNT} is named {entry['summonerName']}")
+
+                summonerId = entry["summonerId"]
+                summoner_ranked_info = lol_watcher_handle.league.by_summoner(
+                    region="EUW1", encrypted_summoner_id=summonerId
                 )
 
-        add_many_player_to_database(database_handle, players_data)
+                for league_type in summoner_ranked_info:
+                    # We only want ranked solo/duo data
+                    if not league_type["queueType"] == "RANKED_SOLO_5x5":
+                        continue
+
+                    rank = league_type["tier"]
+                    rank = convert_rank_string_to_int(rank)
+                    division = league_type["rank"]
+                    division = convert_division_to_int(division)
+
+                    wins = league_type["wins"]
+                    losses = league_type["losses"]
+                    winrate = round(100 * wins / (losses + wins), 1)
+
+                    # We add multiple data because of the way the database request is formated
+                    players_data.append(
+                        (
+                            summonerId,
+                            rank,
+                            division,
+                            winrate,
+                            rank,
+                            division,
+                            winrate,
+                        )
+                    )
+
+            # We add the data to the database
+            add_many_player_to_database(database_handle, players_data)
+
+            page *= 10
 
     except ApiError as err:
         handle_api_error(err)
@@ -163,10 +215,11 @@ def create_database(path: str) -> None:
 
     # The different constants for the Ranks
     values = [
+        ("IRON", 0),
         ("BRONZE", 1),
         ("SILVER", 2),
         ("GOLD", 3),
-        ("PLATINIUM", 4),
+        ("PLATINUM", 4),
         ("DIAMOND", 5),
         ("MASTER", 6),
         ("GRANDMASTER", 7),
@@ -243,6 +296,9 @@ def handle_api_error(err: ApiError) -> None:
         print("future requests wait until the retry-after time passes")
     elif err.response.status_code == 404:
         print("Error 404 : The parameters were probably incorrect")
+    elif err.response.status_code == 403:
+        print("Error 403 : The token used is probably outdated")
+        exit(-1)
     else:
         # Should never happen
         print(err)
@@ -261,10 +317,11 @@ def convert_rank_string_to_int(rank_string: str) -> int:
     """
 
     rank_dict = {
+        "IRON": 0,
         "BRONZE": 1,
         "SILVER": 2,
         "GOLD": 3,
-        "PLATINIUM": 4,
+        "PLATINUM": 4,
         "DIAMOND": 5,
         "MASTER": 6,
         "GRANDMASTER": 7,
