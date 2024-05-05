@@ -27,8 +27,6 @@ This Python script collects data about League of Legends summoners and stores it
 1. Update the `config.py` file with your Riot API token. You can obtain a token from the [Riot Developer Portal](https://developer.riotgames.com/).
 
 ```python
-# config.py
-
 # Replace 'YOUR_RIOT_API_TOKEN' with your actual Riot API token
 API_TOKEN = 'YOUR_RIOT_API_TOKEN'
 DATABASE_NAME = "LeagueSummonerData"  # Customize the database name if needed
